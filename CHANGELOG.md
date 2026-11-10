@@ -1,5 +1,12 @@
 # Historial de cambios
 
+## v3.2.0 (noviembre 2026)
+
+- **Carga de gas específica.** Nuevo campo **Superficie interna (cm²)**. Con el volumen y la superficie se calcula q = V·(dP/dt)/A al final del ensayo, en mbar·L·s⁻¹·cm⁻² y en Pa·m³·s⁻¹·m⁻², con su incertidumbre y su cota. Aparece en el resultado, en el informe PDF y en el CSV.
+- **Exportar gráficas…** dP/dt, subida P(t), serie completa con temperaturas y, con dos o más ensayos seleccionados, la comparación. En español o en inglés; PNG a 300 ppp, PDF, EPS y SVG.
+- **Aviso** si el fichero de temperaturas no coincide en fechas con el de presiones.
+- **Gráficas más legibles:** la leyenda de dP/dt ya no tapa la cota y la etiqueta «cierre» ya no se superpone a la leyenda.
+
 ## v3.1.0 (noviembre 2026)
 
 - **Varios ensayos a la vez.**

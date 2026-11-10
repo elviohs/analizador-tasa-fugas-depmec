@@ -25,8 +25,10 @@ Descargue `DET_FUGAS_IAC_V3.exe` desde **[Releases](https://github.com/elviohs/a
 - **Hace una estimación secundaria con modelos:** exponencial, doble exponencial, potencia y logarítmico, con y sin fuga. Compara los modelos por AIC, da intervalos de confianza y avisa de los casos «no separable», «compatible con 0» o «inconsistente».
 - **Avisa de ensayos no estacionarios,** de la zona Pirani (lectura dependiente del gas) y de variaciones de temperatura si se carga ese fichero.
 - **Aplica un criterio de aceptación:** APTO / NO APTO / NO CONCLUYENTE a partir del volumen (± incertidumbre) y el caudal admisible.
+- **Calcula la carga de gas por superficie:** con el volumen y la superficie interna, q = V·(dP/dt)/A en mbar·L·s⁻¹·cm⁻² y Pa·m³·s⁻¹·m⁻² (desgasificación específica, o una cota de ella si hay fuga).
 - **Compara ensayos repetidos:** misma dP/dt a igual tiempo desde el cierre indica fuga; dP/dt menor indica desgasificación.
 - **Genera un informe PDF en español o en inglés,** de uno o varios ensayos, con tabla resumen, gráficas, modelos y trazabilidad (SHA-256 del fichero, ventana analizada, configuración y versión). También exporta a CSV.
+- **Exporta las gráficas para publicaciones** en español o en inglés: PNG a 300 ppp, PDF, EPS y SVG.
 
 ## Uso
 

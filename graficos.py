@@ -68,8 +68,8 @@ def dibujar_datos(fig, reg: nf.Registro, unidad: str, sensor: Optional[str], ref
         xa, xb = _fechas(np.array([a]))[0], _fechas(np.array([b]))[0]
         ax.axvspan(xa, xb, color=AZUL, alpha=0.10, lw=0)
         ax.axvline(xa, color=AZUL, lw=1.2, ls="--")
-        ax.text(xa, 1.0, et("g_cierre", lang), transform=ax.get_xaxis_transform(),
-                va="top", ha="left", fontsize=8, color=TINTA2)
+        ax.text(xa, 0.03, " " + et("g_cierre", lang), transform=ax.get_xaxis_transform(), rotation=90,
+                va="bottom", ha="left", fontsize=8, color=TINTA2)
     estilo(ax)
     leg = ax.legend(loc="upper left", fontsize=8, frameon=False)
     for t in leg.get_texts():
@@ -93,7 +93,7 @@ def dibujar_datos(fig, reg: nf.Registro, unidad: str, sensor: Optional[str], ref
         ax.set_xlim(x[0], x[-1])
     titulo = reg.meta.get("Test Purpose", "")
     ax.set_title(titulo, loc="left", fontsize=10, color=TINTA)
-    fig.subplots_adjust(left=0.08, right=0.98, top=0.93, bottom=0.08)
+    fig.subplots_adjust(left=0.08, right=0.98, top=0.93, bottom=0.12)
     return ax
 
 
@@ -164,7 +164,7 @@ def dibujar_dpdt(fig, r: nf.Resultado, lang: str = "es"):
     ax.set_xlabel(et("g_horas", lang))
     ax.set_ylabel("dP/dt (mbar/s)")
     estilo(ax)
-    ax.legend(loc="lower left", fontsize=8, frameon=False)
+    ax.legend(loc="best", fontsize=8, frameon=False)
     ax.set_title(et("g_velocidad", lang, c=tr(r.clasificacion, lang)), loc="left", fontsize=10, color=TINTA)
     fig.subplots_adjust(left=0.11, right=0.98, top=0.92, bottom=0.11)
 

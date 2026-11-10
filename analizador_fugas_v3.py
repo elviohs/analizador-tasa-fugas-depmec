@@ -12,6 +12,7 @@ Uso:  python analizador_fugas_v3.py  [fichero1.txt fichero2.txt ...]
 from __future__ import annotations
 
 import os
+import re
 import queue
 import sys
 import threading
@@ -83,7 +84,7 @@ LIMITACIONES
 """
 
 CAMPOS_DEFECTO = {
-    "vol": "", "dvol": "10", "qadm": "",
+    "vol": "", "dvol": "10", "qadm": "", "area": "",
     "excl": f"{nf.CONFIG_DEFECTO['excluir_inicio_min']:g}",
     "ffin": f"{100 * nf.CONFIG_DEFECTO['fraccion_final']:g}",
     "tau": f"{nf.CONFIG_DEFECTO['tau_max_factor']:g}",
@@ -304,10 +305,12 @@ class App:
         self._campo(s, 0, "Volumen (L):", self.vars["vol"])
         self._campo(s, 1, "Incert. volumen (%):", self.vars["dvol"])
         self._campo(s, 2, "Q admisible (mbar·L/s):", self.vars["qadm"])
-        ttk.Label(s, text="Ej.: 1e-6. Sin volumen solo se dan tasas (mbar/s).", style="Pista.TLabel",
-                  wraplength=320).grid(row=3, column=0, columnspan=2, sticky="w")
+        self._campo(s, 3, "Superficie interna (cm²):", self.vars["area"])
+        ttk.Label(s, text="Ej.: 1e-6. Sin volumen solo se dan tasas (mbar/s). Con volumen y superficie se calcula "
+                          "la carga de gas por cm² (desgasificación específica).", style="Pista.TLabel",
+                  wraplength=320).grid(row=4, column=0, columnspan=2, sticky="w")
         bc = ttk.Button(s, text="Copiar criterio y opciones a todos los ensayos", command=self.copiar_a_todos)
-        bc.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        bc.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(4, 0))
         self._editables.append(bc)
 
         # ---- 5. Opciones
@@ -337,7 +340,9 @@ class App:
         ttk.Button(f, text="Generar informe…  (ES / EN)", style="Accion.TButton",
                    command=self.dialogo_informe).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0))
         ttk.Button(f, text="Exportar CSV…", command=self.exportar_csv).grid(row=2, column=0, sticky="ew", pady=(6, 0))
-        ttk.Button(f, text="Ayuda y método", command=self.ayuda).grid(row=2, column=1, sticky="ew", padx=(4, 0), pady=(6, 0))
+        ttk.Button(f, text="Exportar gráficas…", command=self.dialogo_graficas).grid(row=2, column=1, sticky="ew",
+                                                                                    padx=(4, 0), pady=(6, 0))
+        ttk.Button(f, text="Ayuda y método", command=self.ayuda).grid(row=3, column=0, columnspan=2, sticky="ew", pady=(6, 0))
         ttk.Label(p, text=f"v{nf.VERSION} · Línea de Vacío y Criogenia · DEPMEC · IAC\n"
                           "Revise siempre los resultados críticos (helio).", style="Pista.TLabel",
                   justify="left").pack(anchor="w", pady=(10, 0))
@@ -625,6 +630,16 @@ class App:
                                  f"{ex}\n\nEl lector espera el formato del CryoMonitor (cabecera con «Date» y "
                                  "«Local time»). Si el formato es otro, envíe un ejemplo para adaptarlo.")
             return
+        ini, fin = max(t.tiempo[0], e.reg.tiempo[0]), min(t.tiempo[-1], e.reg.tiempo[-1])
+        if ini >= fin:
+            fmt_f = lambda x: str(x)[:16].replace("T", " ")  # noqa: E731
+            if not messagebox.askyesno(
+                    "Fechas que no coinciden",
+                    "El fichero de temperaturas no se solapa en el tiempo con el de presiones:\n\n"
+                    f"  Presiones:      {fmt_f(e.reg.tiempo[0])} → {fmt_f(e.reg.tiempo[-1])}\n"
+                    f"  Temperaturas: {fmt_f(t.tiempo[0])} → {fmt_f(t.tiempo[-1])}\n\n"
+                    "¿Asignarlo de todas formas?"):
+                return
         n = 0
         for x in self.ensayos.values():   # todos los ensayos del mismo fichero de presiones
             if x.reg is e.reg:
@@ -743,6 +758,9 @@ class App:
         qadm = self._num(c, "qadm", "Q admisible", minimo=0)
         if qadm and not vol:
             raise ValueError("Para aplicar el caudal admisible hace falta el volumen.")
+        area = self._num(c, "area", "Superficie interna", minimo=0)
+        if area and not vol:
+            raise ValueError("Para la carga de gas por superficie hace falta el volumen.")
         cfg = {
             "excluir_inicio_min": self._num(c, "excl", "Excluir inicio", True, 0),
             "fraccion_final": self._num(c, "ffin", "Ventana final", True, 1) / 100.0,
@@ -754,7 +772,7 @@ class App:
             raise ValueError("La ventana final no debe superar el 80 %.")
         ref = None if e.ref in (NINGUNO, e.sensor) else e.ref
         return dict(reg=e.reg, sensor=e.sensor, unidad=e.unidad, i0=e.i0, i1=e.i1, sensor_ref=ref,
-                    criterio=nf.Criterio(vol or None, dvol / 100.0, qadm or None), config=cfg,
+                    criterio=nf.Criterio(vol or None, dvol / 100.0, qadm or None, area or None), config=cfg,
                     temperaturas=e.temps, con_modelos=bool(c.get("modelos", True)),
                     ventana_detectada=e.ventana_det if e.auto else None)
 
@@ -1001,6 +1019,84 @@ class App:
         except Exception:  # noqa: BLE001
             pass
 
+    # ================================================================== gráficas para publicaciones
+    def dialogo_graficas(self):
+        """Exporta las gráficas del ensayo actual (y la comparación de los seleccionados)
+        en formatos de publicación (PNG 300 ppp, PDF, EPS, SVG), en español o inglés."""
+        e = self.actual
+        if e is None or e.res is None:
+            messagebox.showinfo("Sin resultados", "Analice primero el ensayo seleccionado.")
+            return
+        w = tk.Toplevel(self.root)
+        w.title("Exportar gráficas")
+        w.transient(self.root)
+        w.resizable(False, False)
+        fr = ttk.Frame(w, padding=14)
+        fr.pack(fill="both", expand=True)
+        ttk.Label(fr, text="Idioma de las gráficas", font=("TkDefaultFont", 10, "bold")).grid(row=0, column=0, sticky="w")
+        v_lang = tk.StringVar(value="en")
+        for k, (cod, nom) in enumerate(IDIOMAS.items()):
+            ttk.Radiobutton(fr, text=nom, value=cod, variable=v_lang).grid(row=1, column=k, sticky="w", padx=(0, 16))
+        ttk.Label(fr, text="Formatos", font=("TkDefaultFont", 10, "bold")).grid(row=2, column=0, sticky="w", pady=(10, 0))
+        formatos = {"png": tk.BooleanVar(value=True), "pdf": tk.BooleanVar(value=True),
+                    "eps": tk.BooleanVar(value=False), "svg": tk.BooleanVar(value=False)}
+        for k, (ext, var) in enumerate(formatos.items()):
+            ttk.Checkbutton(fr, text=ext.upper() + (" (300 ppp)" if ext == "png" else ""), variable=var).grid(
+                row=3, column=k, sticky="w", padx=(0, 10))
+        sel = [x for x in self._seleccion() if x.res is not None]
+        v_comp = tk.BooleanVar(value=len(sel) > 1)
+        c = ttk.Checkbutton(fr, text=f"Incluir la comparación de los ensayos seleccionados ({len(sel)})", variable=v_comp)
+        c.grid(row=4, column=0, columnspan=4, sticky="w", pady=(10, 0))
+        if len(sel) < 2:
+            c.configure(state="disabled")
+        ttk.Label(fr, text="Tamaño: 17,8 × 10,7 cm (ancho de doble columna). En EPS las transparencias se "
+                           "dibujan opacas.", style="Pista.TLabel", wraplength=420).grid(row=5, column=0, columnspan=4,
+                                                                                    sticky="w", pady=(8, 0))
+
+        def exportar():
+            exts = [x for x, v in formatos.items() if v.get()]
+            if not exts:
+                messagebox.showinfo("Formatos", "Elija al menos un formato.", parent=w)
+                return
+            carpeta = filedialog.askdirectory(title="Carpeta donde guardar las gráficas", parent=w)
+            if not carpeta:
+                return
+            lang = v_lang.get()
+            base = re.sub(r"[^\w-]+", "_", e.nombre).strip("_")[:60] or "ensayo"
+            r, reg = e.res, e.reg
+            ref = None if e.ref == NINGUNO else e.ref
+            figuras = [("dpdt", lambda fg: gr.dibujar_dpdt(fg, r, lang)),
+                       ("subida", lambda fg: gr.dibujar_subida(fg, r, lang)),
+                       ("datos", lambda fg: gr.dibujar_datos(fg, reg, r.unidad, r.sensor, ref, r, e.temps,
+                                                             (r.t_cierre, r.t_fin), lang))]
+            if v_comp.get() and len(sel) > 1:
+                figuras.append(("comparacion", lambda fg: gr.dibujar_comparacion(fg, [x.res for x in sel],
+                                                                                 [x.nombre for x in sel], lang)))
+            hechos = []
+            try:
+                for nombre, dib in figuras:
+                    fig = Figure(figsize=(7.0, 4.2), dpi=100, facecolor="white")
+                    dib(fig)
+                    for ext in exts:
+                        ruta = os.path.join(carpeta, f"{base}_{nombre}_{lang}.{ext}")
+                        fig.savefig(ruta, dpi=300 if ext == "png" else 100, facecolor="white",
+                                    bbox_inches="tight", pad_inches=0.04)
+                        hechos.append(os.path.basename(ruta))
+            except Exception as ex:  # noqa: BLE001
+                messagebox.showerror("Error al exportar", str(ex), parent=w)
+                return
+            w.destroy()
+            self._estado(f"{len(hechos)} gráficas guardadas en {carpeta}")
+            messagebox.showinfo("Gráficas exportadas", f"Guardadas en {carpeta}:\n" + "\n".join(hechos))
+
+        bf = ttk.Frame(fr)
+        bf.grid(row=6, column=0, columnspan=4, sticky="e", pady=(12, 0))
+        ttk.Button(bf, text="Cancelar", command=w.destroy).pack(side="right")
+        ttk.Button(bf, text="Exportar…", style="Accion.TButton", command=exportar).pack(side="right", padx=(0, 6))
+        w.grab_set()
+        w.wait_visibility()
+        w.focus_set()
+
     def exportar_csv(self):
         e = self.actual
         if e is None or e.res is None:
@@ -1025,6 +1121,11 @@ class App:
                          ("Cota L (mbar/s)", n(r.cota_L)),
                          ("L estimada (mbar/s)", n(r.L_estimada[0]) if r.L_estimada else "no separable"),
                          ("Q cota (mbar·L/s)", n(r.Q_cota)), ("Veredicto", r.veredicto)]
+                if r.carga_especifica:
+                    filas += [("Superficie interna (cm2)", n(r.criterio.area_cm2)),
+                              ("Carga específica final (mbar·L/s/cm2)", n(r.carga_especifica[0])),
+                              ("Carga específica sigma", n(r.carga_especifica[1])),
+                              ("Carga específica cota", n(r.carga_especifica[2]))]
                 for k, v in filas:
                     f.write(f"{k};{v}\n")
                 f.write("\nt_centro (h);dP/dt (mbar/s);sigma (mbar/s)\n")

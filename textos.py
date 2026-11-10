@@ -229,6 +229,12 @@ ETIQ = {
     "q_cota": ("Caudal de fuga (cota)", "Leak rate (upper bound)"),
     "q_est": ("Caudal de fuga estimado", "Estimated leak rate"),
     "q_adm": ("Caudal admisible", "Acceptable leak rate"),
+    "area": ("Superficie interna", "Internal surface area"),
+    "q_esp": ("Carga de gas específica al final", "Specific gas load at the end"),
+    "q_esp_txt": ("V·dP/dt/A = {q} ± {s} mbar·L·s⁻¹·cm⁻² (2σ; cota {c}) = {qsi} Pa·m³·s⁻¹·m⁻². Si la subida final "
+                  "es desgasificación, es la tasa de desgasificación específica; si hay fuga, una cota superior de ella.",
+                  "V·dP/dt/A = {q} ± {s} mbar·L·s⁻¹·cm⁻² (2σ; bound {c}) = {qsi} Pa·m³·s⁻¹·m⁻². If the final rise is "
+                  "outgassing, this is the specific outgassing rate; if there is a leak, an upper bound of it."),
     "identificacion": ("Identificación del ensayo", "Test identification"),
     "fichero": ("Fichero", "File"),
     "sistema": ("Sistema", "System"),

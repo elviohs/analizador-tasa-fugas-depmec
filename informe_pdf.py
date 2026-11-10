@@ -188,6 +188,10 @@ def _seccion_ensayo(pdf, e: EnsayoInforme, lang, temporales, titulo=None):
             _fila(pdf, et("q_est", L), f"{nf.fmt(r.Q_estimada[0], 'mbar·L/s')} ± {nf.fmt(2 * r.Q_estimada[1])} (2σ)")
     if c.q_admisible:
         _fila(pdf, et("q_adm", L), nf.fmt(c.q_admisible, "mbar·L/s"))
+    if r.carga_especifica:
+        q, sq, qc = r.carga_especifica
+        _fila(pdf, et("area", L), f"{c.area_cm2:g} cm²")
+        _fila(pdf, et("q_esp", L), et("q_esp_txt", L, q=nf.fmt(q), s=nf.fmt(2 * sq), c=nf.fmt(qc), qsi=nf.fmt(q * 1e3)))
 
     _h(pdf, et("identificacion", L))
     _fila(pdf, et("fichero", L), os.path.basename(r.fichero))

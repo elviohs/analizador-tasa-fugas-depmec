@@ -259,3 +259,15 @@ def test_informe_bilingue(tmp_path):
         out = tmp_path / f"inf_{lang}.pdf"
         ip.generar_informe_multi(ens, str(out), lang=lang, comparar=True, observaciones="obs")
         assert out.stat().st_size > 20000
+
+
+def test_carga_especifica(tmp_path):
+    """q = V·dP/dt/A (idea de la rutina MATLAB del DEPMEC, con unidades correctas)."""
+    ruta, _ = caso(tmp_path, "qa", CASOS["fuga_pura"][0])
+    r = nf.analizar(nf.leer_registro(ruta), "Press1(P)", con_modelos=False,
+                    criterio=nf.Criterio(140.0, 0.0, None, 449.33 * 100))
+    q, sq, qc = r.carga_especifica
+    assert abs(q - 1e-7 * 140.0 / 44933.0) < 0.03 * q
+    assert qc >= q
+    r = nf.analizar(nf.leer_registro(ruta), "Press1(P)", con_modelos=False, criterio=nf.Criterio(140.0))
+    assert r.carga_especifica is None

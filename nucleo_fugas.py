@@ -54,7 +54,7 @@ from scipy.optimize import least_squares
 
 from textos import Msg
 
-VERSION = "3.1.0"
+VERSION = "3.2.0"
 
 # Factores de conversión a mbar
 UNIDADES = {"mbar": 1.0, "hPa": 1.0, "Pa": 0.01, "Torr": 1.333224, "bar": 1000.0}
@@ -840,6 +840,7 @@ class Criterio:
     volumen_L: Optional[float] = None
     incert_volumen: float = 0.10       # fracción
     q_admisible: Optional[float] = None  # mbar·L/s
+    area_cm2: Optional[float] = None     # superficie interna expuesta al vacío
 
 
 @dataclass
@@ -892,6 +893,9 @@ class Resultado:
     temperaturas: Dict[str, Tuple[float, float]]
     avisos: List[str]
     recomendaciones: List[str]
+    # carga de gas por unidad de superficie al final del ensayo (si hay V y A):
+    # (q, sigma, cota) en mbar·L·s^-1·cm^-2. 1 mbar·L·s^-1·cm^-2 = 1e3 Pa·m^3·s^-1·m^-2
+    carga_especifica: Optional[Tuple[float, float, float]] = None
 
 
 def analizar(reg: Registro, sensor: str, unidad: str = "mbar",
@@ -1090,12 +1094,23 @@ def analizar(reg: Registro, sensor: str, unidad: str = "mbar",
     if frac_pir > 0.5:
         rec.append(Msg("rec_pirani"))
 
+    # carga de gas por unidad de superficie: q = V·dP/dt / A. Si la subida final es
+    # desgasificación, es la tasa de desgasificación específica; si hay fuga, una
+    # cota superior de ella (idea tomada de la rutina MATLAB del DEPMEC, con las
+    # unidades corregidas: allí se dividía dP/dt entre el área sin multiplicar por V).
+    carga = None
+    if crit.volumen_L and crit.area_cm2 and np.isfinite(s_f):
+        V, dV, A = crit.volumen_L, crit.incert_volumen, crit.area_cm2
+        q = s_f * V / A
+        carga = (float(q), float(math.hypot(s_sig * V / A, q * dV)), float(cota * V * (1 + dV) / A))
+
     return Resultado(VERSION, reg.ruta, reg.sha256, sensor, sensor_ref, unidad,
                      reg.tiempo[i0], reg.tiempo[i1], motivo_fin, auto, confirmado, T, cfg,
                      t, p, p_bruta, t_todo, p_todo, escalones, n_picos,
                      pend, float(s_f), float(s_sig), (float(T - wf), float(T)), float(cota),
                      beta, beta_sig, n_beta, n_neg, clas, estacionario, expl,
-                     der, mods, L_est, crit, Q_cota, Q_est, ver, ver_mot, frac_pir, temps, avisos, rec)
+                     der, mods, L_est, crit, Q_cota, Q_est, ver, ver_mot, frac_pir, temps, avisos, rec,
+                     carga)
 
 
 # =============================================================================
@@ -1175,6 +1190,13 @@ def resumen_texto(r: Resultado) -> str:
     if r.criterio.volumen_L:
         L.append(f"Volumen: {r.criterio.volumen_L:g} L ± {100 * r.criterio.incert_volumen:.0f} %")
         L.append(f"  Q ≤ {fmt(r.Q_cota, 'mbar·L/s')}" + (f"   Q estimado = {fmt(r.Q_estimada[0])} ± {fmt(2 * r.Q_estimada[1])}" if r.Q_estimada else ""))
+    if r.carga_especifica:
+        q, sq, qc = r.carga_especifica
+        L.append(f"Superficie interna: {r.criterio.area_cm2:g} cm²")
+        L.append(f"  Carga de gas específica al final (V·dP/dt/A): {fmt(q)} ± {fmt(2 * sq)} mbar·L·s⁻¹·cm⁻² "
+                 f"(≤ {fmt(qc)}; = {fmt(q * 1e3)} Pa·m³·s⁻¹·m⁻²)")
+        L.append("  Si la subida final es desgasificación, es la tasa de desgasificación específica; "
+                 "si hay fuga, una cota superior de ella.")
     L.append(f"VEREDICTO: {r.veredicto}  {('— ' + r.veredicto_motivo) if r.veredicto != 'SIN CRITERIO' else ''}")
     if r.avisos:
         L.append("")
