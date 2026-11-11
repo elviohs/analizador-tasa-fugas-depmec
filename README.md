@@ -82,6 +82,8 @@ Los tests usan curvas sintéticas con fuga conocida. Comprueban, entre otras cos
 - Con una sola curva, fuga y desgasificación suelen no ser separables. En ese caso el programa lo indica y la referencia es la cota superior.
 - Por encima de ~1e-2 mbar la galga de rango completo mide con la Pirani, cuya lectura depende del gas.
 - Los cambios de temperatura durante el ensayo alteran la presión y la desgasificación.
+- Si la presión baja al final del ensayo (criobombeo, readsorción, válvula que no cierra), la subida no acota la fuga: el programa da «no acotable» y NO CONCLUYENTE.
+- El cambio de hora se corrige para las fechas oficiales de la UE (último domingo de marzo y de octubre).
 - El formato del fichero de temperaturas del CryoMonitor se ha supuesto igual al de presiones y está pendiente de validar con un fichero real.
 - Los umbrales de clasificación de β (−0,2 y −0,6) son empíricos y conviene validarlos con más ensayos.
 

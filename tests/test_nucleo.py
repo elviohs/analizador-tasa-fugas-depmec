@@ -271,3 +271,129 @@ def test_carga_especifica(tmp_path):
     assert qc >= q
     r = nf.analizar(nf.leer_registro(ruta), "Press1(P)", con_modelos=False, criterio=nf.Criterio(140.0))
     assert r.carga_especifica is None
+
+
+# ---------------------------------------------------------------- v3.2.1 (revisión externa)
+def test_presion_que_baja_no_es_apto(tmp_path):
+    """Si la presión baja al final, la fuga no se puede acotar: nunca APTO."""
+    ruta, _ = caso(tmp_path, "baja", lambda t: 5e-3 * (1 - np.exp(-t / 7200)) - 2e-8 * t, ruido=0.002)
+    reg = nf.leer_registro(ruta)
+    a, b, vs = nf.ensayos_en_registro(reg)
+    r = nf.analizar(reg, a, i0=vs[0].i0, i1=vs[0].i1, sensor_ref=b, ventana_detectada=vs[0],
+                    criterio=nf.Criterio(100, 0.1, 1e-5), con_modelos=False)
+    assert r.clasificacion == "PRESIÓN DESCENDENTE"
+    assert not np.isfinite(r.cota_L) and r.Q_cota is None
+    assert r.veredicto == "NO CONCLUYENTE"
+    assert "no acotable" in nf.resumen_texto(r)
+
+
+def test_lecturas_cero_no_cortan_el_ensayo(tmp_path):
+    rng = np.random.default_rng(1)
+    t = np.arange(0, 25 * 3600, 20.0)
+    p = np.where(t < 3600, 1e-5, 1e-5 + 1e-7 * np.clip(t - 3600, 0, None)) * (1 + 0.005 * rng.standard_normal(len(t)))
+    ref = np.where(t < 3600, 1e-5, 2e-7)
+    k = int((3600 + 10 * 3600) / 20)
+    p[k:k + 4] = 0.0                       # cuatro lecturas a cero
+    p[k + 500:k + 504] = 1e-9              # y un hueco de 80 s con lecturas absurdas
+    ruta = tmp_path / "ceros.txt"
+    escribir_sintetico(ruta, p, ref)
+    reg = nf.leer_registro(str(ruta))
+    _, _, vs = nf.ensayos_en_registro(reg)
+    assert len(vs) == 1
+    assert (vs[0].i1 - vs[0].i0) * 20 / 3600 > 23.5
+    assert vs[0].motivo_fin == "fin del registro"
+
+
+def test_rebombeo_real_sigue_detectandose(tmp_path):
+    t = np.arange(0, 20 * 3600, 20.0)
+    p = np.where(t < 3600, 1e-5, 1e-5 + 1e-7 * np.clip(t - 3600, 0, None))
+    p = np.where(t > 13 * 3600, 2e-6, p)   # se vuelve a bombear a las 13 h
+    ref = np.where((t < 3600) | (t > 13 * 3600), 1e-5, 2e-7)
+    ruta = tmp_path / "rebombeo.txt"
+    escribir_sintetico(ruta, p, ref)
+    reg = nf.leer_registro(str(ruta))
+    _, _, vs = nf.ensayos_en_registro(reg)
+    assert vs[0].motivo_fin == "re-bombeo o apertura de válvula"
+    assert abs(reg.segundos[vs[0].i1] - 13 * 3600) < 120
+
+
+def test_sigma_beta_sin_factor_espurio():
+    """var(log10 s) = (sigma / (s·ln10))^2: con residuos pequeños, sigma_beta = 1/sqrt(Sxx)."""
+    tt = np.logspace(4, 4.5, 6)
+    pend = nf.Pendientes(tt, 1e-7 * np.ones(6), 1e-9 * np.ones(6))
+    beta, sig, n, _ = nf.tendencia_beta(pend, tt[-1], decadas=1.0)
+    x = np.log10(tt)
+    w = (1e-7 * math.log(10) / 1e-9) ** 2
+    esperado = 1 / math.sqrt(w * np.sum((x - x.mean()) ** 2))
+    assert n == 6 and abs(beta) < 1e-9
+    assert sig == pytest.approx(esperado, rel=1e-6)
+
+
+def test_cabecera_con_tabuladores(tmp_path):
+    ruta, _ = caso(tmp_path, "tabs", lambda t: 1e-7 * t)
+    lineas = open(ruta, encoding="cp1252").read().splitlines()
+    lineas = ["Seconds\tDate\tLocal time\tPress1(P)\tPress2(P)" if ln.startswith("Seconds") else
+              ("\t\t\tCOM5 C1\tCOM5 C2" if "COM5 C1" in ln else ln) for ln in lineas]
+    ruta2 = tmp_path / "tabs2.txt"
+    ruta2.write_text("\n".join(lineas) + "\n", encoding="cp1252")
+    reg = nf.leer_registro(str(ruta2))
+    assert list(reg.columnas) == ["Press1(P)", "Press2(P)"]
+    assert reg.etiquetas == {"Press1(P)": "COM5 C1", "Press2(P)": "COM5 C2"}
+
+
+def _fichero_cambio_hora(ruta, inicio, cambio, salto_h, contador_real=True, horas=30):
+    """Escribe un registro con la hora LOCAL de un cambio de hora (salto_h = -1 otoño, +1 primavera)."""
+    n = int(horas * 3600 / 20)
+    el = np.arange(n) * 20.0
+    p = np.where(el < 3600, 1e-5, 1e-5 + 1e-7 * np.clip(el - 3600, 0, None))
+    ref = np.where(el < 3600, 1e-5, 2e-7)
+    with open(ruta, "w", encoding="cp1252") as f:
+        f.write("Subsystem or prototype:  CryoMonitor\n\n                                      COM5 C1          COM5 C2\n")
+        f.write("Seconds   Date          Local time    Press1(P)        Press2(P)        \n")
+        for i in range(n):
+            real = inicio + timedelta(seconds=float(el[i]))
+            loc = real if real < cambio else real + timedelta(hours=salto_h)
+            seg = int(el[i]) + 1 if contador_real else int((loc - inicio).total_seconds()) + 1
+            f.write(f"{seg:<10}{loc:%d/%m/%Y}    {loc.hour}:{loc:%M:%S}       {_fmt(p[i]):<17}{_fmt(ref[i])}\n")
+    return n
+
+
+def test_cambio_hora_otono_no_pierde_datos(tmp_path):
+    ruta = tmp_path / "otono.txt"
+    n = _fichero_cambio_hora(ruta, datetime(2026, 10, 24, 20, 0, 0), datetime(2026, 10, 25, 3, 0, 0), -1)
+    reg = nf.leer_registro(str(ruta))
+    assert len(reg.tiempo) == n
+    assert np.all(np.diff(reg.segundos) == 20)
+    assert any("invierno" in a for a in reg.avisos)
+    assert not any("ordenad" in a or "duplicad" in a for a in reg.avisos)
+
+
+def test_cambio_hora_primavera(tmp_path):
+    ruta = tmp_path / "primavera.txt"
+    n = _fichero_cambio_hora(ruta, datetime(2026, 3, 28, 20, 0, 0), datetime(2026, 3, 29, 2, 0, 0), +1)
+    reg = nf.leer_registro(str(ruta))
+    assert len(reg.tiempo) == n and np.all(np.diff(reg.segundos) == 20)
+    assert any("verano" in a for a in reg.avisos)
+
+
+def test_hueco_real_de_una_hora_no_es_cambio_de_hora(tmp_path):
+    """Si el contador de segundos también salta 1 h, es un hueco del registro, no un cambio de hora."""
+    ruta = tmp_path / "hueco.txt"
+    _fichero_cambio_hora(ruta, datetime(2026, 3, 28, 20, 0, 0), datetime(2026, 3, 29, 2, 0, 0), +1,
+                         contador_real=False)
+    reg = nf.leer_registro(str(ruta))
+    assert not any("verano" in a for a in reg.avisos)
+    assert np.max(np.diff(reg.segundos)) > 3600
+
+
+def test_no_concluyente_por_volumen(tmp_path):
+    ruta, _ = caso(tmp_path, "fuga_vol", lambda t: 1e-7 * t)
+    reg = nf.leer_registro(ruta)
+    a, b, vs = nf.ensayos_en_registro(reg)
+    r = nf.analizar(reg, a, i0=vs[0].i0, i1=vs[0].i1, sensor_ref=b, ventana_detectada=vs[0],
+                    criterio=nf.Criterio(100, 0.10, 1.04e-5), con_modelos=False)
+    assert r.clasificacion == "FUGA DOMINANTE" and r.veredicto == "NO CONCLUYENTE"
+    assert r.veredicto_motivo.clave == "ver_nc_vol"
+    assert "desgasificación" not in r.veredicto_motivo
+    assert any(getattr(m, "clave", "") == "rec_volumen" for m in r.recomendaciones)
+    assert "volume uncertainty" in r.veredicto_motivo.tr("en")

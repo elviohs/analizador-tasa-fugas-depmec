@@ -436,9 +436,10 @@ class App:
         else:
             d = e.res.clasificacion.replace(" DOMINANTE", "").replace("DESGASIFICACIÓN", "DESGAS.")
             d = d.replace("MIXTO / NO CONCLUYENTE", "MIXTO").replace("SIN SUBIDA SIGNIFICATIVA", "SIN SUBIDA")
+            d = d.replace("PRESIÓN DESCENDENTE", "P. BAJA")
             if e.res.veredicto != "SIN CRITERIO":
                 d += f" · {e.res.veredicto}"
-            vals = (d, f"{e.res.cota_L:.2e}")
+            vals = (d, nf.fmt(e.res.cota_L))
         if e.iid and self.lista.exists(e.iid):
             self.lista.item(e.iid, text=e.nombre, values=vals)
         else:
@@ -862,7 +863,8 @@ class App:
         e = self.actual
         self._set_texto((f"ENSAYO: {e.nombre}\n" if e else "") + nf.resumen_texto(r))
         texto = (f"{e.nombre}  ·  " if e else "") + r.clasificacion + ("" if r.estacionario else " (no estacionario)")
-        texto += f"  ·  Fuga ≤ {r.cota_L:.2e} mbar/s"
+        texto += (f"  ·  Fuga ≤ {r.cota_L:.2e} mbar/s" if np.isfinite(r.cota_L)
+                  else "  ·  Fuga no acotable (la presión baja)")
         if r.Q_cota:
             texto += f"  (Q ≤ {r.Q_cota:.2e} mbar·L/s)"
         texto += f"  ·  {r.veredicto}"

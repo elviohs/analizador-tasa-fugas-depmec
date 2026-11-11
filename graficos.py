@@ -144,7 +144,8 @@ def dibujar_dpdt(fig, r: nf.Resultado, lang: str = "es"):
     if (~pos).any():
         ax.plot(pd.t[~pos] / 3600, np.full((~pos).sum(), max(pd.s[pos].min() if pos.any() else 1e-12, 1e-15)),
                 "v", color=NARANJA, ms=6, label=et("g_neg", lang))
-    ax.axhline(r.cota_L, color=NARANJA, lw=2.0, ls="--", label=et("g_cota", lang, x=r.cota_L))
+    if np.isfinite(r.cota_L) and r.cota_L > 0:
+        ax.axhline(r.cota_L, color=NARANJA, lw=2.0, ls="--", label=et("g_cota", lang, x=r.cota_L))
     if r.L_estimada:
         L, s, _ = r.L_estimada
         ax.axhspan(max(L - 2 * s, 1e-30), L + 2 * s, color=AQUA, alpha=0.25, lw=0,

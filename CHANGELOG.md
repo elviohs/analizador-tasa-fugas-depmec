@@ -1,5 +1,17 @@
 # Historial de cambios
 
+## v3.2.1 (noviembre 2026)
+
+Correcciones tras una revisión externa del código. Cada una tiene su test de regresión.
+
+- **Presión que baja al final del ensayo.** Nuevo diagnóstico **PRESIÓN DESCENDENTE**: la fuga queda «no acotable» y el veredicto es NO CONCLUYENTE. Antes salía una cota negativa y el veredicto APTO.
+- **Lecturas ≤ 0 o no numéricas.** Ya no cortan el ensayo (antes cuatro ceros seguidos se tomaban como re-bombeo). La caída tiene que mantenerse al menos 5 min para considerarse re-bombeo.
+- **Incertidumbre de β.** A los pesos les faltaba el factor ln(10)², y σ(β) salía hasta 2,3 veces mayor. No cambia ningún diagnóstico de los ejemplos; solo afecta a casos en el límite.
+- **Cabecera separada por tabuladores.** Se leen bien los nombres de columna.
+- **Cambio de hora** (último domingo de octubre y de marzo). Se detecta y se corrige la base de tiempos sin perder datos. Si el contador de segundos del CryoMonitor también salta, se trata como un hueco real.
+- **Mensajes de NO CONCLUYENTE más precisos.** Con fuga dominante, indica si lo que impide decidir es la incertidumbre del volumen o la de la pendiente. También hay mensajes propios para «sin subida significativa» y para ensayos no estacionarios.
+- **Informe:** columna de veredicto más ancha en la tabla resumen.
+
 ## v3.2.0 (noviembre 2026)
 
 - **Carga de gas específica.** Nuevo campo **Superficie interna (cm²)**. Con el volumen y la superficie se calcula q = V·(dP/dt)/A al final del ensayo, en mbar·L·s⁻¹·cm⁻² y en Pa·m³·s⁻¹·m⁻², con su incertidumbre y su cota. Aparece en el resultado, en el informe PDF y en el CSV.

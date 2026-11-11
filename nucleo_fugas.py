@@ -46,7 +46,7 @@ import math
 import re
 import warnings
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -54,7 +54,7 @@ from scipy.optimize import least_squares
 
 from textos import Msg
 
-VERSION = "3.2.0"
+VERSION = "3.2.1"
 
 # Factores de conversión a mbar
 UNIDADES = {"mbar": 1.0, "hPa": 1.0, "Pa": 0.01, "Torr": 1.333224, "bar": 1000.0}
@@ -80,6 +80,8 @@ CONFIG_DEFECTO = {
 # =============================================================================
 _RE_FECHA = re.compile(r"^\d{1,2}/\d{1,2}/\d{4}$")
 _RE_HORA = re.compile(r"^\d{1,2}:\d{2}:\d{2}$")
+# separador de campos de la cabecera: tabuladores o 2+ espacios ("Local time" lleva un solo espacio)
+_RE_SEP = re.compile(r"\s*\t\s*|\s{2,}")
 
 
 @dataclass
@@ -138,6 +140,46 @@ def _a_float(tok: str) -> Tuple[float, int]:
     return v, max(len(mant), 1)
 
 
+def _ultimo_domingo(anio: int, mes: int) -> date:
+    d = date(anio, mes, 31)  # marzo y octubre tienen 31 días
+    return d - timedelta(days=(d.weekday() - 6) % 7)
+
+
+def _corregir_cambio_hora(tiempo: np.ndarray, segundos: np.ndarray) -> Tuple[np.ndarray, List[str]]:
+    """El CryoMonitor guarda la hora local: en el cambio de hora de otoño la hora
+    se repite y en el de primavera se salta una hora. Se detectan como un salto
+    de ±1 h entre muestras consecutivas (en el orden del fichero) el último
+    domingo de octubre / marzo y, si hay contador de segundos, comprobando que
+    el contador NO da ese salto (si lo da, es un hueco real del registro).
+    Se conservan las horas anteriores al cambio y se desplazan las posteriores
+    para que la base de tiempos sea continua. Devuelve (tiempo, avisos)."""
+    avisos: List[str] = []
+    if len(tiempo) < 3:
+        return tiempo, avisos
+    d = np.diff(tiempo).astype(float)
+    pos = d[d > 0]
+    if not len(pos):
+        return tiempo, avisos
+    paso = float(np.median(pos))
+    tol = max(3.0 * paso, 90.0)
+    ds = np.diff(segundos) if len(segundos) == len(tiempo) else np.full(len(d), np.nan)
+    desp = np.zeros(len(tiempo))
+    candidatos = np.where((np.abs(d - (paso - 3600.0)) <= tol) | (np.abs(d - (paso + 3600.0)) <= tol))[0]
+    for i in candidatos:
+        otono = d[i] < 0
+        dia = tiempo[i].astype("datetime64[D]").astype(object)
+        if dia != _ultimo_domingo(dia.year, 10 if otono else 3):
+            continue
+        if np.isfinite(ds[i]) and abs(ds[i] - d[i]) <= tol:
+            continue   # el contador de segundos también salta: no es cambio de hora
+        desp[i + 1:] += 3600.0 if otono else -3600.0
+        hora = str(tiempo[i + 1]).replace("T", " ")
+        avisos.append(Msg("lec_hora_invierno" if otono else "lec_hora_verano", f=hora))
+    if avisos:
+        tiempo = tiempo + desp.astype("timedelta64[s]")
+    return tiempo, avisos
+
+
 def leer_registro(ruta: str) -> Registro:
     """Lee un fichero CryoMonitor de presiones o de temperaturas.
 
@@ -158,6 +200,7 @@ def leer_registro(ruta: str) -> Registro:
     linea_previa = ""
     filas_t: List[str] = []
     filas_v: List[List[float]] = []
+    filas_s: List[float] = []   # contador de segundos del CryoMonitor (si lo hay)
     digitos = 0
     descartadas = no_num = 0
     for ln in lineas:
@@ -166,10 +209,10 @@ def leer_registro(ruta: str) -> Registro:
             linea_previa = ln
             continue
         if re.search(r"\bDate\b", s) and re.search(r"time", s, re.I):
-            campos = re.split(r"\s{2,}", s)
+            campos = [c for c in _RE_SEP.split(s) if c]
             idx = [i for i, c in enumerate(campos) if re.search(r"time", c, re.I)]
             nombres = campos[idx[-1] + 1:] if idx else campos[3:]
-            etiquetas_canal = re.split(r"\s{2,}", linea_previa.strip()) if linea_previa.strip() else []
+            etiquetas_canal = [c for c in _RE_SEP.split(linea_previa.strip()) if c] if linea_previa.strip() else []
             linea_previa = ln
             continue
         linea_previa = ln
@@ -193,6 +236,7 @@ def leer_registro(ruta: str) -> Registro:
             continue
         filas_t.append(toks[i_f] + " " + toks[i_f + 1])
         filas_v.append(vals)
+        filas_s.append(_a_float(toks[i_f - 1])[0] if i_f >= 1 else math.nan)
 
     if nombres is None:
         raise ValueError("No se encontró la cabecera de datos (línea con 'Date' y 'Local time').")
@@ -208,8 +252,8 @@ def leer_registro(ruta: str) -> Registro:
         M[i, :len(v)] = v
 
     tiempo = np.array([datetime.strptime(x, "%d/%m/%Y %H:%M:%S") for x in filas_t], dtype="datetime64[s]")
+    tiempo, avisos = _corregir_cambio_hora(tiempo, np.array(filas_s, float))
     orden = np.argsort(tiempo, kind="stable")
-    avisos = []
     if np.any(np.diff(orden) < 0):
         avisos.append(Msg("lec_desordenado"))
     tiempo, M = tiempo[orden], M[orden]
@@ -323,15 +367,27 @@ def _suave(x: np.ndarray, k: int = 5) -> np.ndarray:
 
 def detectar_final(t: np.ndarray, p: np.ndarray, i0: int) -> Tuple[int, str]:
     """Primer índice tras i0 donde se ventea (salto a > 100 mbar) o se vuelve
-    a bombear (caída sostenida por debajo del 50 % del máximo alcanzado)."""
-    lp = _suave(np.log10(np.clip(p, 1e-15, None)), 5)
+    a bombear (caída por debajo del 50 % del máximo alcanzado, sostenida al
+    menos 5 min). Las lecturas no válidas (<= 0, no numéricas) se ignoran: se
+    sustituyen por la última lectura válida para que no parezcan una caída."""
+    ok = np.isfinite(p) & (p > 0)
+    if not ok.any():
+        return len(p) - 1, "fin del registro"
+    idx = np.where(ok, np.arange(len(p)), -1)
+    idx = np.maximum.accumulate(idx)            # última lectura válida (hacia delante)
+    idx[idx < 0] = int(np.argmax(ok))           # antes de la primera válida: la primera
+    pv = p[idx]
+    lp = _suave(np.log10(pv), 5)
+    umbral = math.log10(2)
     pmax = -np.inf
     for i in range(i0 + 1, len(p)):
-        if p[i] > 100 and p[i] > 5 * p[i - 1]:
+        if ok[i] and pv[i] > 100 and pv[i] > 5 * pv[i - 1]:
             return i - 1, "venteo"
         pmax = max(pmax, lp[i - 1])
-        if i - i0 > 10 and lp[i] < pmax - math.log10(2) and np.all(lp[i:i + 3] < pmax - math.log10(2)):
-            return i - 1, "re-bombeo o apertura de válvula"
+        if i - i0 > 10 and lp[i] < pmax - umbral:
+            j = max(int(np.searchsorted(t, t[i] + 300.0, side="right")), i + 3)
+            if np.all(lp[i:j] < pmax - umbral):
+                return i - 1, "re-bombeo o apertura de válvula"
     return len(p) - 1, "fin del registro"
 
 
@@ -607,7 +663,7 @@ def tendencia_beta(pend: Pendientes, t_fin: float, decadas: float = 0.5) -> Tupl
         return math.nan, math.nan, int(m.sum()), neg
     x = np.log10(pend.t[m])
     y = np.log10(pend.s[m])
-    w = (pend.s[m] / np.maximum(pend.sig[m], 1e-300)) ** 2  # 1/var(log s) ~ (s/sigma)^2
+    w = (pend.s[m] * math.log(10.0) / np.maximum(pend.sig[m], 1e-300)) ** 2  # 1/var(log10 s) = (s·ln10/sigma)^2
     W = np.sum(w)
     xm, ym = np.sum(w * x) / W, np.sum(w * y) / W
     sxx = np.sum(w * (x - xm) ** 2)
@@ -975,6 +1031,11 @@ def analizar(reg: Registro, sensor: str, unidad: str = "mbar",
 
     if not np.isfinite(s_f):
         clas, expl = "INDETERMINADO", Msg("exp_nan")
+    elif cota < 0:
+        # la presión BAJA de forma significativa: hay bombeo (criobombeo, readsorción al
+        # enfriarse, válvula que no cierra). dP/dt ya no es fuga + desgasificación y no acota la fuga.
+        clas, expl = "PRESIÓN DESCENDENTE", Msg("exp_baja", s=s_f, s2=2 * s_sig)
+        cota = math.nan
     elif s_f - 2 * s_sig <= 0:
         clas = "SIN SUBIDA SIGNIFICATIVA"
         expl = Msg("exp_sin_subida")
@@ -1013,7 +1074,7 @@ def analizar(reg: Registro, sensor: str, unidad: str = "mbar",
         if ratio_pre > 2:
             estacionario = False
             avisos.append(Msg("pre_cierre", r=ratio_pre))
-    if n_neg and n_beta + n_neg > 0 and n_neg / (n_beta + n_neg) > 0.2:
+    if clas != "PRESIÓN DESCENDENTE" and n_neg and n_beta + n_neg > 0 and n_neg / (n_beta + n_neg) > 0.2:
         avisos.append(Msg("ventanas_neg", n=n_neg))
 
     # --- modelos
@@ -1064,13 +1125,16 @@ def analizar(reg: Registro, sensor: str, unidad: str = "mbar",
     ver, ver_mot = "SIN CRITERIO", Msg("ver_sin")
     if crit.volumen_L:
         V, dV = crit.volumen_L, crit.incert_volumen
-        Q_cota = cota * V * (1 + dV)
+        Q_cota = cota * V * (1 + dV) if np.isfinite(cota) else None
         if L_est is not None:
             Q_est = (L_est[0] * V, math.hypot(L_est[1] * V, L_est[0] * V * dV))
         if crit.q_admisible:
             Qa = crit.q_admisible
             s_inf = s_f - 2 * s_sig
-            if Q_cota <= Qa:
+            if Q_cota is None:
+                ver = "NO CONCLUYENTE"
+                ver_mot = Msg("ver_nc_baja")
+            elif Q_cota <= Qa:
                 ver = "APTO"
                 ver_mot = Msg("ver_apto", q=Q_cota, qa=Qa)
             elif clas == "FUGA DOMINANTE" and estacionario and s_inf * V * (1 - dV) > Qa:
@@ -1081,11 +1145,32 @@ def analizar(reg: Registro, sensor: str, unidad: str = "mbar",
                 ver_mot = Msg("ver_noapto_est", q=Q_est[0], s=2 * Q_est[1], qa=Qa)
             else:
                 ver = "NO CONCLUYENTE"
-                ver_mot = Msg("ver_nc", q=Q_cota, qa=Qa)
+                if clas == "FUGA DOMINANTE" and estacionario:
+                    # la subida es fuga; el admisible cae dentro de su intervalo de incertidumbre
+                    q_min, inc_p = s_inf * V * (1 - dV), 2 * s_sig / s_f
+                    clave = "ver_nc_vol" if dV >= inc_p else "ver_nc_pend"
+                    ver_mot = Msg(clave, qa=Qa, a=q_min, b=Q_cota, dv=100 * dV, dp=100 * inc_p)
+                elif clas == "FUGA DOMINANTE":
+                    ver_mot = Msg("ver_nc_noestac", q=Q_cota, qa=Qa)
+                elif clas == "SIN SUBIDA SIGNIFICATIVA":
+                    ver_mot = Msg("ver_nc_resol", q=Q_cota, qa=Qa)
+                elif clas == "INDETERMINADO":
+                    ver_mot = Msg("ver_nc_indet", q=Q_cota, qa=Qa)
+                else:
+                    ver_mot = Msg("ver_nc", q=Q_cota, qa=Qa)
 
     rec = []
-    if ver == "NO CONCLUYENTE" or clas in ("MIXTO / NO CONCLUYENTE", "DESGASIFICACIÓN DOMINANTE"):
+    if clas == "PRESIÓN DESCENDENTE":
+        rec.append(Msg("rec_baja"))
+    elif clas in ("MIXTO / NO CONCLUYENTE", "DESGASIFICACIÓN DOMINANTE", "INDETERMINADO") or (
+            ver == "NO CONCLUYENTE" and clas == "FUGA DOMINANTE" and not estacionario):
         rec.append(Msg("rec_repetir"))
+        rec.append(Msg("rec_prolongar"))
+    elif ver == "NO CONCLUYENTE" and clas == "SIN SUBIDA SIGNIFICATIVA":
+        rec.append(Msg("rec_prolongar"))
+    if getattr(ver_mot, "clave", "") == "ver_nc_vol":
+        rec.append(Msg("rec_volumen"))
+    elif getattr(ver_mot, "clave", "") == "ver_nc_pend":
         rec.append(Msg("rec_prolongar"))
     if not estacionario:
         rec.append(Msg("rec_estabilizar"))
@@ -1099,7 +1184,7 @@ def analizar(reg: Registro, sensor: str, unidad: str = "mbar",
     # cota superior de ella (idea tomada de la rutina MATLAB del DEPMEC, con las
     # unidades corregidas: allí se dividía dP/dt entre el área sin multiplicar por V).
     carga = None
-    if crit.volumen_L and crit.area_cm2 and np.isfinite(s_f):
+    if crit.volumen_L and crit.area_cm2 and np.isfinite(s_f) and np.isfinite(cota):
         V, dV, A = crit.volumen_L, crit.incert_volumen, crit.area_cm2
         q = s_f * V / A
         carga = (float(q), float(math.hypot(s_sig * V / A, q * dV)), float(cota * V * (1 + dV) / A))
@@ -1137,6 +1222,10 @@ def comparar(resultados: Sequence[Resultado], etiquetas: Sequence[str]) -> Compa
         raise ValueError("Los ensayos no tienen intervalos de tiempo comunes.")
     tc = np.logspace(math.log10(t_lo), math.log10(t_hi), 12)
 
+    for r, e in zip(resultados, etiquetas):
+        if not np.any(r.pend.s > 0):
+            raise ValueError(f"{e}: no tiene ventanas con dP/dt > 0 que comparar.")
+
     def interp(pd: Pendientes):
         m = pd.s > 0
         return 10 ** np.interp(np.log10(tc), np.log10(pd.t[m]), np.log10(pd.s[m]))
@@ -1146,7 +1235,8 @@ def comparar(resultados: Sequence[Resultado], etiquetas: Sequence[str]) -> Compa
         rr = interp(r.pend) / s0
         ratios.append(rr)
         medios.append(float(np.exp(np.mean(np.log(rr[len(rr) // 2:])))))
-    cota = min(r.cota_L for r in resultados)
+    finitas = [r.cota_L for r in resultados if np.isfinite(r.cota_L)]
+    cota = min(finitas) if finitas else math.nan
     ult = medios[-1]
     if 0.8 <= ult <= 1.25:
         concl = Msg("comp_fuga", r=ult)
@@ -1182,14 +1272,19 @@ def resumen_texto(r: Resultado) -> str:
     L.append("")
     L.append(f"dP/dt final ({r.ventana_final[0] / 3600:.1f}-{r.ventana_final[1] / 3600:.1f} h): "
              f"{fmt(r.s_final, 'mbar/s')} ± {fmt(2 * r.s_final_sig)} (2σ)")
-    L.append(f"COTA SUPERIOR de la fuga:  L ≤ {fmt(r.cota_L, 'mbar/s')}  ({fmt(r.cota_L * 3600, 'mbar/h')})")
+    if np.isfinite(r.cota_L):
+        L.append(f"COTA SUPERIOR de la fuga:  L ≤ {fmt(r.cota_L, 'mbar/s')}  ({fmt(r.cota_L * 3600, 'mbar/h')})")
+    else:
+        L.append("COTA SUPERIOR de la fuga: no acotable (la presión baja al final del ensayo)")
     if r.L_estimada:
         L.append(f"Fuga estimada: {fmt(r.L_estimada[0], 'mbar/s')} ± {fmt(2 * r.L_estimada[1])} (2σ)  [{r.L_estimada[2]}]")
-    else:
+    elif np.isfinite(r.cota_L):
         L.append("Fuga estimada: no separable de la desgasificación con estos datos (use la cota superior).")
+    else:
+        L.append("Fuga estimada: no aplicable (la presión baja al final del ensayo).")
     if r.criterio.volumen_L:
         L.append(f"Volumen: {r.criterio.volumen_L:g} L ± {100 * r.criterio.incert_volumen:.0f} %")
-        L.append(f"  Q ≤ {fmt(r.Q_cota, 'mbar·L/s')}" + (f"   Q estimado = {fmt(r.Q_estimada[0])} ± {fmt(2 * r.Q_estimada[1])}" if r.Q_estimada else ""))
+        L.append((f"  Q ≤ {fmt(r.Q_cota, 'mbar·L/s')}" if r.Q_cota is not None else "  Q: no acotable") + (f"   Q estimado = {fmt(r.Q_estimada[0])} ± {fmt(2 * r.Q_estimada[1])}" if r.Q_estimada else ""))
     if r.carga_especifica:
         q, sq, qc = r.carga_especifica
         L.append(f"Superficie interna: {r.criterio.area_cm2:g} cm²")

@@ -172,18 +172,20 @@ def _seccion_ensayo(pdf, e: EnsayoInforme, lang, temporales, titulo=None):
     _h(pdf, et("resultados", L))
     _fila(pdf, et("dpdt_final", L), f"{nf.fmt(r.s_final, 'mbar/s')} ± {nf.fmt(2 * r.s_final_sig)} (2σ) "
           + et("entre", L, a=r.ventana_final[0] / 3600, b=r.ventana_final[1] / 3600))
-    _fila(pdf, et("cota", L), f"L ≤ {nf.fmt(r.cota_L, 'mbar/s')}  ({nf.fmt(r.cota_L * 3600, 'mbar/h')})")
+    _fila(pdf, et("cota", L), f"L ≤ {nf.fmt(r.cota_L, 'mbar/s')}  ({nf.fmt(r.cota_L * 3600, 'mbar/h')})"
+          if np.isfinite(r.cota_L) else et("no_acotable", L))
     beta = f"{r.beta:.2f} ± {2 * r.beta_sig:.2f} (2σ)  " if np.isfinite(r.beta) else "—  "
     _fila(pdf, et("tendencia", L), beta + et("tendencia_nota", L))
     if r.L_estimada:
         _fila(pdf, et("fuga_est", L), f"{nf.fmt(r.L_estimada[0], 'mbar/s')} ± {nf.fmt(2 * r.L_estimada[1])} (2σ) — "
               + tr(r.L_estimada[2], L))
     else:
-        _fila(pdf, et("fuga_est", L), et("no_separable", L))
+        _fila(pdf, et("fuga_est", L), et("no_separable", L) if np.isfinite(r.cota_L) else et("no_acotable", L))
     c = r.criterio
     if c.volumen_L:
         _fila(pdf, et("volumen", L), f"{c.volumen_L:g} L ± {100 * c.incert_volumen:.0f} %")
-        _fila(pdf, et("q_cota", L), f"Q ≤ {nf.fmt(r.Q_cota, 'mbar·L/s')}")
+        _fila(pdf, et("q_cota", L), f"Q ≤ {nf.fmt(r.Q_cota, 'mbar·L/s')}" if r.Q_cota is not None
+              else et("no_acotable", L))
         if r.Q_estimada:
             _fila(pdf, et("q_est", L), f"{nf.fmt(r.Q_estimada[0], 'mbar·L/s')} ± {nf.fmt(2 * r.Q_estimada[1])} (2σ)")
     if c.q_admisible:
@@ -281,7 +283,7 @@ def generar_informe_multi(ensayos: Sequence[EnsayoInforme], ruta_pdf: str, lang:
                               tr(r.clasificacion, L) + ("" if r.estacionario else " *"), nf.fmt(r.cota_L),
                               nf.fmt(r.Q_cota), tr(r.veredicto, L)))
                 colores.append(gr.ESTADO.get(r.veredicto))
-            _tabla(pdf, (7, 45, 25, 13, 34, 19, 19, 18),
+            _tabla(pdf, (7, 39, 25, 13, 34, 19, 19, 24),
                    ("#", et("ensayo", L), et("col_cierre", L), et("col_dur", L), et("col_diag", L),
                     et("col_cota", L), et("col_q", L), et("col_ver", L)), filas, colores, tam=7.3)
             if any(not e.res.estacionario for e in ensayos):

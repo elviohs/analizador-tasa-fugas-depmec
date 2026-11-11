@@ -17,6 +17,7 @@ CODIGOS = {
     "DESGASIFICACIÓN DOMINANTE": "OUTGASSING DOMINATED",
     "MIXTO / NO CONCLUYENTE": "MIXED / INCONCLUSIVE",
     "SIN SUBIDA SIGNIFICATIVA": "NO SIGNIFICANT RISE",
+    "PRESIÓN DESCENDENTE": "FALLING PRESSURE",
     "INDETERMINADO": "UNDETERMINED",
     "APTO": "PASS",
     "NO APTO": "FAIL",
@@ -45,6 +46,14 @@ MENSAJES = {
                        "{n} rows with duplicated timestamps discarded."),
     "lec_huecos": ("{n} huecos en el registro (> 10 veces el periodo de muestreo de {paso:.0f} s).",
                    "{n} gaps in the log (> 10 times the {paso:.0f} s sampling period)."),
+    "lec_hora_invierno": ("Cambio al horario de invierno detectado ({f}): la hora local se repetía. Las horas desde ese "
+                          "momento se han desplazado +1 h para que la base de tiempos sea continua (no se pierde ningún dato).",
+                          "Change to winter time detected ({f}): the local time repeated itself. Times from then on "
+                          "have been shifted by +1 h to keep the time base continuous (no data are lost)."),
+    "lec_hora_verano": ("Cambio al horario de verano detectado ({f}): la hora local saltaba una hora. Las horas desde ese "
+                        "momento se han desplazado −1 h para que la base de tiempos sea continua.",
+                        "Change to summer time detected ({f}): the local time skipped one hour. Times from then on "
+                        "have been shifted by −1 h to keep the time base continuous."),
     "lec_no_num": ("{n} valores no numéricos (p.ej. 'Overrange') tratados como ausentes.",
                    "{n} non-numeric values (e.g. 'Overrange') treated as missing."),
     "lec_descartadas": ("{n} líneas sin formato de datos descartadas.",
@@ -63,6 +72,12 @@ MENSAJES = {
                        "cota superior indicada (limitada por la resolución del registro y la duración).",
                        "Pressure does not rise significantly in the final window. The leak is below the stated upper "
                        "bound (limited by the logging resolution and the test duration)."),
+    "exp_baja": ("La presión BAJA de forma significativa al final del ensayo (dP/dt = {s:.2e} ± {s2:.2e} mbar/s): algo "
+                 "sigue bombeando (criobombeo en superficies frías, readsorción al enfriarse o una válvula que no cierra "
+                 "del todo). En estas condiciones la subida de presión no acota la fuga.",
+                 "Pressure FALLS significantly at the end of the test (dP/dt = {s:.2e} ± {s2:.2e} mbar/s): something is "
+                 "still pumping (cryopumping on cold surfaces, re-adsorption while cooling, or a valve that does not fully "
+                 "close). Under these conditions the pressure rise does not bound the leak."),
     "exp_pocas": ("Pocas ventanas válidas para evaluar la tendencia de dP/dt.",
                   "Too few valid windows to assess the dP/dt trend."),
     "exp_fuga": ("dP/dt es prácticamente constante al final del ensayo (beta = {b:.2f} ± {s:.2f}). "
@@ -123,6 +138,32 @@ MENSAJES = {
                "la subida es desgasificación.",
                "The upper bound ({q:.2e}) exceeds the acceptable value ({qa:.2e}) but cannot be attributed to a leak: "
                "part of the rise is outgassing."),
+    "ver_nc_baja": ("La presión baja al final del ensayo: no se puede acotar la fuga ni aplicar el criterio.",
+                    "Pressure falls at the end of the test: the leak cannot be bounded and the criterion cannot be applied."),
+    "ver_nc_vol": ("La subida es fuga, pero el admisible ({qa:.2e}) queda dentro del intervalo de la fuga "
+                   "[{a:.2e} – {b:.2e}] mbar·L/s. Lo que impide decidir es la incertidumbre del volumen (±{dv:.0f} %), "
+                   "mayor que la de la pendiente (±{dp:.0f} %).",
+                   "The rise is a leak, but the acceptable value ({qa:.2e}) lies within the leak interval "
+                   "[{a:.2e} – {b:.2e}] mbar·L/s. The decision is prevented by the volume uncertainty (±{dv:.0f} %), "
+                   "larger than that of the slope (±{dp:.0f} %)."),
+    "ver_nc_pend": ("La subida es fuga, pero el admisible ({qa:.2e}) queda dentro del intervalo de la fuga "
+                    "[{a:.2e} – {b:.2e}] mbar·L/s. Lo que impide decidir es la incertidumbre de la pendiente (±{dp:.0f} %), "
+                    "mayor que la del volumen (±{dv:.0f} %).",
+                    "The rise is a leak, but the acceptable value ({qa:.2e}) lies within the leak interval "
+                    "[{a:.2e} – {b:.2e}] mbar·L/s. The decision is prevented by the slope uncertainty (±{dp:.0f} %), "
+                    "larger than that of the volume (±{dv:.0f} %)."),
+    "ver_nc_noestac": ("La cota superior ({q:.2e}) supera el admisible ({qa:.2e}), pero el ensayo no es estacionario y no "
+                       "se puede asegurar que esa subida sea fuga.",
+                       "The upper bound ({q:.2e}) exceeds the acceptable value ({qa:.2e}), but the test is not stationary "
+                       "and the rise cannot be confirmed as a leak."),
+    "ver_nc_resol": ("La presión no sube de forma significativa, pero la cota superior ({q:.2e}) supera el admisible "
+                     "({qa:.2e}): la sensibilidad del ensayo (resolución y duración) no basta para demostrar el criterio.",
+                     "Pressure does not rise significantly, but the upper bound ({q:.2e}) exceeds the acceptable value "
+                     "({qa:.2e}): the test sensitivity (resolution and duration) is not enough to prove the criterion."),
+    "ver_nc_indet": ("La cota superior ({q:.2e}) supera el admisible ({qa:.2e}) y no se ha podido diagnosticar el origen "
+                     "de la subida.",
+                     "The upper bound ({q:.2e}) exceeds the acceptable value ({qa:.2e}) and the origin of the rise could "
+                     "not be diagnosed."),
     # recomendaciones
     "rec_repetir": ("Repetir el ensayo tras volver a bombear y comparar dP/dt a igual tiempo desde el cierre (pestaña "
                     "Comparación): si se mantiene es fuga; si baja, desgasificación.",
@@ -135,6 +176,14 @@ MENSAJES = {
                         "Repeat the test with the cryostat temperature-stabilised (and load the temperature file) to "
                         "obtain a conclusive diagnosis."),
     "rec_helio": ("Localizar la fuga con detector de helio.", "Locate the leak with a helium leak detector."),
+    "rec_baja": ("Repetir el ensayo con el sistema estabilizado en temperatura (sin superficies frías que bombeen) y "
+                 "comprobar que la válvula de guillotina cierra bien (el sensor del lado turbo ayuda a verlo).",
+                 "Repeat the test with the system temperature-stabilised (no cold surfaces pumping) and check that the "
+                 "gate valve closes properly (the turbo-side gauge helps to see it)."),
+    "rec_volumen": ("Determinar el volumen con menor incertidumbre (p. ej. por expansión de gas desde un volumen "
+                    "calibrado) y volver a aplicar el criterio: no hace falta repetir el ensayo.",
+                    "Determine the volume with a lower uncertainty (e.g. by gas expansion from a calibrated volume) "
+                    "and apply the criterion again: the test does not need to be repeated."),
     "rec_pirani": ("Gran parte del ensayo está en zona Pirani: si se busca precisión, considere un medidor independiente "
                    "del gas (capacitivo) para la subida.",
                    "Most of the test is in the Pirani range: for higher accuracy, consider a gas-independent "
@@ -220,6 +269,7 @@ ETIQ = {
     "dpdt_final": ("dP/dt en la ventana final", "dP/dt in the final window"),
     "entre": ("entre {a:.1f} h y {b:.1f} h", "between {a:.1f} h and {b:.1f} h"),
     "cota": ("Cota superior de la fuga", "Leak upper bound"),
+    "no_acotable": ("no acotable: la presión baja al final del ensayo", "cannot be bounded: pressure falls at the end of the test"),
     "tendencia": ("Tendencia de dP/dt (β)", "dP/dt trend (β)"),
     "tendencia_nota": ("[≈0: fuga constante; ≈ −1 o menor: desgasificación]", "[≈0: constant leak; ≈ −1 or lower: outgassing]"),
     "fuga_est": ("Fuga estimada", "Estimated leak"),
